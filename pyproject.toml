@@ -1,0 +1,51 @@
+[project]
+name = "agent-bridge-mcp"
+version = "0.1.0"
+description = "MCP server to orchestrate parallel AI coding agents (omp, Claude Code, any model or provider) in Tern terminal tabs and git worktrees, from Claude Desktop or Claude Code."
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.10"
+authors = [{ name = "Merlin", email = "174901162+merlinh0@users.noreply.github.com" }]
+keywords = [
+  "mcp", "mcp-server", "model-context-protocol", "claude", "claude-code", "claude-desktop",
+  "ai-agents", "multi-agent", "agent-orchestration", "coding-agent", "git-worktree", "parallel-agents",
+  "omp", "oh-my-pi", "tern", "llm", "openai", "codex", "anthropic", "developer-tools",
+]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Environment :: Console",
+  "Intended Audience :: Developers",
+  "Operating System :: MacOS",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = ["mcp>=1.22,<2"]
+
+[project.urls]
+Homepage = "https://github.com/merlinh0/agent-bridge"
+Repository = "https://github.com/merlinh0/agent-bridge"
+Issues = "https://github.com/merlinh0/agent-bridge/issues"
+Changelog = "https://github.com/merlinh0/agent-bridge/blob/main/CHANGELOG.md"
+
+[project.scripts]
+agent-bridge = "agent_bridge.cli:main"
+
+[build-system]
+requires = ["hatchling>=1.26"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/agent_bridge"]
+
+[dependency-groups]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["tests"]
