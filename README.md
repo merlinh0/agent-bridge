@@ -134,6 +134,16 @@ Default thinking is `low`, `medium` and `high` respectively. Run `list_models(re
 - With an allowlist, an agent started without a model gets `auto:balanced` from the allowed models instead of the engine's default.
 - Disallowed models are refused when an agent starts, resumes or switches model.
 
+## Notifications
+
+The orchestrator learns that an agent finished through `wait_for_agents`, but only while it is waiting. To be told yourself, even when no conversation is following the agents, turn on desktop notifications:
+
+```sh
+agent-bridge notify on     # off to remove
+```
+
+This installs a small omp hook (`~/.omp/agent/hooks/post/agent-bridge-notify.ts`). Every omp session started afterwards, in Tern or not, with or without agent-bridge, shows a notification when it finishes a turn and waits for input (macOS; Linux uses `notify-send` when available). Subagents and `omp -p` runs stay silent.
+
 ## Configuration
 
 | Environment variable | Default |

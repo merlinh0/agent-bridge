@@ -10,7 +10,8 @@
   omp catalog so new releases are picked up automatically; no vendor favoured by default.
 - Model policy: an allowlist (glob patterns) and a pinned model per tier, set by the orchestrator for the
   session or by the user in `~/.agent-bridge/config.json`; enforced server-side.
-- `agent-bridge install | uninstall | doctor | models | auto-approve` CLI and a one-line `install.sh`.
+- `agent-bridge install | uninstall | doctor | models | auto-approve | notify` CLI and a one-line `install.sh`.
+- `agent-bridge notify on`: an omp hook that shows a desktop notification when a session finishes its turn.
 - Hardened for untrusted tool arguments: validated agent names, confined session files, no shell or option
   parsing of caller text, fail-closed cleanup, `auto_approve` off until the user enables it, nothing typed
   into a pane whose agent has exited, owner-only state.

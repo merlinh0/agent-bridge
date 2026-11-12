@@ -123,6 +123,16 @@ Le raisonnement par défaut est `low`, `medium` et `high` respectivement. `list_
 - Avec une liste d'autorisations, un agent lancé sans modèle reçoit `auto:balanced` parmi les modèles autorisés, au lieu du modèle par défaut du moteur.
 - Un modèle non autorisé est refusé au lancement, à la reprise et au changement de modèle.
 
+## Notifications
+
+L'orchestrateur apprend qu'un agent a fini grâce à `wait_for_agents`, mais seulement pendant qu'il attend. Pour être prévenu toi-même, même quand aucune conversation ne suit les agents, active les notifications :
+
+```sh
+agent-bridge notify on     # off pour les retirer
+```
+
+Cela installe un petit hook omp (`~/.omp/agent/hooks/post/agent-bridge-notify.ts`). Chaque session omp lancée ensuite, dans Tern ou non, avec ou sans agent-bridge, affiche une notification quand elle finit un tour et attend la suite (macOS ; sous Linux, `notify-send` s'il est installé). Les sous-agents et les lancements `omp -p` restent silencieux.
+
 ## FAQ
 
 **Comment faire tourner plusieurs agents en parallèle sans conflit ?** Un worktree et une branche par agent. Tu fusionnes les branches que tu acceptes, puis tu appelles `stop_agent(cleanup=True)`.

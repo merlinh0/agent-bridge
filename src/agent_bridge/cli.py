@@ -1,8 +1,9 @@
-"""Command line: `agent-bridge serve | install | uninstall | doctor | models | auto-approve`."""
+"""Command line: `agent-bridge serve | install | uninstall | doctor | models | auto-approve | notify`."""
 
 from __future__ import annotations
 
 import argparse
+import importlib.resources
 import json
 import os
 import shutil
@@ -13,6 +14,9 @@ from pathlib import Path
 from . import __version__, store
 
 SERVER_NAME = "agent-bridge"
+# omp loads every hook in this directory when a session starts.
+OMP_HOOKS = Path(os.environ.get("PI_CODING_AGENT_DIR") or Path.home() / ".omp/agent") / "hooks/post"
+NOTIFY_HOOK = OMP_HOOKS / "agent-bridge-notify.ts"
 REPOSITORY = "git+https://github.com/merlinh0/agent-bridge"
 
 
@@ -162,6 +166,7 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         _report(_claude_code("get", SERVER_NAME).returncode == 0, "Claude Code registration", "", "agent-bridge install")
     allowed = store.read_config().get("allow_auto_approve")
     print(f"  auto_approve: {'allowed' if allowed else 'refused (enable with `agent-bridge auto-approve on`)'}")
+    print(f"  notifications: {'on' if NOTIFY_HOOK.exists() else 'off (enable with `agent-bridge notify on`)'}")
     print("\nAll required checks passed." if all(required) else "\nSome required checks failed.")
     sys.exit(0 if all(required) else 1)
 
@@ -180,6 +185,17 @@ def cmd_auto_approve(args: argparse.Namespace) -> None:
     print(f"auto_approve is now {'allowed' if config['allow_auto_approve'] else 'refused'} ({store.CONFIG})")
 
 
+def cmd_notify(args: argparse.Namespace) -> None:
+    """Install or remove the omp hook that shows a notification when a session finishes its turn."""
+    if args.state == "off":
+        NOTIFY_HOOK.unlink(missing_ok=True)
+        print("Notifications off.")
+        return
+    OMP_HOOKS.mkdir(parents=True, exist_ok=True)
+    NOTIFY_HOOK.write_text(importlib.resources.files("agent_bridge").joinpath("notify_hook.ts").read_text(encoding="utf-8"))
+    print(f"Notifications on ({NOTIFY_HOOK}). omp sessions started from now on will notify you when they finish a turn.")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(prog=SERVER_NAME, description="Orchestrate coding agents in Tern from Claude.")
     parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
@@ -196,6 +212,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--refresh", action="store_true", help="re-fetch provider catalogs first")
     p = sub.add_parser("auto-approve", help="allow or refuse agents that run tools without asking (refused by default)")
     p.add_argument("state", choices=["on", "off"])
+    p = sub.add_parser("notify", help="desktop notification when an omp session finishes its turn")
+    p.add_argument("state", choices=["on", "off"])
     args = parser.parse_args(argv)
     commands = {
         "install": cmd_install,
@@ -203,6 +221,7 @@ def main(argv: list[str] | None = None) -> None:
         "doctor": cmd_doctor,
         "models": cmd_models,
         "auto-approve": cmd_auto_approve,
+        "notify": cmd_notify,
     }
     if args.cmd not in commands:
         from .server import run
