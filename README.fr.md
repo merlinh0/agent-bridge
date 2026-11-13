@@ -1,6 +1,6 @@
 # agent-bridge — orchestrer des agents de code IA en parallèle depuis Claude (serveur MCP)
 
-**agent-bridge** est un serveur MCP qui transforme une conversation Claude (Claude Desktop ou Claude Code) en **orchestrateur d'agents de code IA en parallèle**. Chaque agent tourne dans son propre onglet [Tern](https://docs.stencil.so/tern), sur son propre **worktree git** et sa propre branche. Un agent peut utiliser **n'importe quel modèle disponible sur ta machine** via [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi), ou tourner avec Claude Code.
+**agent-bridge** est un serveur MCP qui transforme une conversation Claude (Claude Desktop ou Claude Code) en **orchestrateur d'agents de code IA en parallèle**. Chaque agent tourne dans son propre onglet [Tern](https://docs.stencil.so/tern), dans sa propre **copie isolée du dépôt** (checkout [ovnfs](https://github.com/stencil-hq/ovnfs) ou worktree git) et sur sa propre branche. Un agent peut utiliser **n'importe quel modèle disponible sur ta machine** via [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi), ou tourner avec Claude Code.
 
 L'orchestrateur planifie le travail, lance les agents, suit leur avancement, lit leurs rapports et leurs diffs, et leur envoie des corrections. Tu n'as rien à copier-coller entre les deux.
 
@@ -10,7 +10,7 @@ L'orchestrateur planifie le travail, lance les agents, suit leur avancement, lit
 flowchart LR
   O["Claude Desktop / Claude Code<br/>(orchestrateur)"] -- outils MCP --> B["agent-bridge"]
   B -- "tern new tab · send · capture" --> T["Session Tern « agents »<br/>un onglet par agent"]
-  B -- "git worktree add" --> W["worktree + branche agent/&lt;nom&gt;"]
+  B -- "ovnfs new / git worktree add" --> W["copie + branche agent/&lt;nom&gt;"]
   T --> A["omp (tout fournisseur) ou Claude Code<br/>modèle + raisonnement par agent"]
   A -- "transcript de session" --> B
   W -- "git diff" --> B
@@ -18,7 +18,7 @@ flowchart LR
 
 ## Fonctionnalités
 
-- **Des agents en parallèle, isolés.** Chaque agent a son propre worktree et sa propre branche (`agent/<nom>`). Les agents ne se marchent pas dessus et ne touchent pas à ta copie de travail.
+- **Des agents en parallèle, isolés.** Chaque agent a sa propre copie du dépôt et sa propre branche (`agent/<nom>`). Les agents ne se marchent pas dessus et ne touchent pas à ta copie de travail. Si [ovnfs](https://github.com/stencil-hq/ovnfs) est installé, cette copie s'ouvre en une seconde environ, sans dupliquer les fichiers, et garde ceux que git ignore (`node_modules`, `.env`, caches de build) : l'agent peut lancer le projet sans rien réinstaller. Sinon, c'est un worktree git.
 - **Tous les modèles de ta machine.** Le moteur omp utilise tous les modèles qu'omp propose chez toi : Anthropic, OpenAI / Codex, LiteLLM ou autres proxys, modèles locaux, et tout autre fournisseur que tu as configuré. Claude Code est disponible comme second moteur.
 - **Un choix de modèle qui reste à jour.** Tu donnes un modèle précis, ou un niveau `auto:fast`, `auto:balanced` ou `auto:frontier`. Ces niveaux sont recalculés à partir du catalogue de modèles en direct : un nouveau modèle y apparaît dès qu'omp le liste. Aucun fournisseur n'est favorisé par défaut.
 - **C'est toi qui choisis les modèles autorisés.** Tu donnes une consigne à l'orchestrateur, par exemple « uniquement `openai-codex/*` » ou « frontier = opus ». Il l'enregistre avec `set_model_policy`, et le serveur la fait respecter à chaque lancement.
@@ -79,7 +79,7 @@ Autres demandes possibles :
 
 | Outil | Rôle |
 |---|---|
-| `start_agent(repo, task, name?, base?, engine?, model?, thinking?, auto_approve?, worktree?)` | Crée le worktree et la branche `agent/<nom>`, puis lance l'agent dans un onglet Tern |
+| `start_agent(repo, task, name?, base?, engine?, model?, thinking?, auto_approve?, isolate?)` | Crée la copie du dépôt et la branche `agent/<nom>`, puis lance l'agent dans un onglet Tern |
 | `discover_sessions(include_saved?, limit?)` | Liste les sessions omp / Claude Code ouvertes dans Tern (toutes fenêtres) et les sessions sauvegardées récentes |
 | `adopt_session(block? \| session_file?, name?, base?)` | Prend le contrôle d'une session ouverte sans la relancer, ou rouvre une session sauvegardée dans un nouvel onglet |
 | `list_agents()` / `get_agent(name, history?)` | Donne l'état, le modèle, le niveau de raisonnement, le dernier message (le rapport), les commits et les changements non commités |
@@ -87,7 +87,7 @@ Autres demandes possibles :
 | `send_message(name, message, model?, thinking?)` | Envoie une suite ou une correction. Si `model` ou `thinking` change, l'agent redémarre sur ce modèle avec tout son historique |
 | `wait_for_agents(names?, timeout_s?)` | Attend qu'un agent termine son tour |
 | `capture_screen(name)` / `press_keys(name, keys)` | Montre l'écran d'un agent et permet de répondre à une approbation ou une boîte de dialogue |
-| `stop_agent(name, cleanup?, force?)` | Ferme l'onglet. Avec `cleanup`, supprime aussi le worktree et la branche, mais refuse s'il reste du travail non fusionné. Une session reprise est seulement oubliée : rien n'est fermé ni supprimé |
+| `stop_agent(name, cleanup?, force?)` | Ferme l'onglet. Avec `cleanup`, supprime aussi la copie de l'agent et sa branche, mais refuse s'il reste du travail non fusionné. Une session reprise est seulement oubliée : rien n'est fermé ni supprimé |
 | `list_models(engine?, filter?, refresh?)` | Liste tous les modèles disponibles avec leurs niveaux de raisonnement et leur prix, les niveaux auto actuels, et indique si chaque modèle est autorisé |
 | `get_model_policy()` / `set_model_policy(allowed_models?, tiers?)` | Lit ou définit les règles sur les modèles |
 
@@ -135,7 +135,7 @@ Cela installe un petit hook omp (`~/.omp/agent/hooks/post/agent-bridge-notify.ts
 
 ## FAQ
 
-**Comment faire tourner plusieurs agents en parallèle sans conflit ?** Un worktree et une branche par agent. Tu fusionnes les branches que tu acceptes, puis tu appelles `stop_agent(cleanup=True)`.
+**Comment faire tourner plusieurs agents en parallèle sans conflit ?** Une copie du dépôt et une branche par agent. Tu fusionnes les branches que tu acceptes, puis tu appelles `stop_agent(cleanup=True)`. Avec ovnfs, les commits d'un agent restent dans sa copie jusqu'à ce que tu les ramènes avec `ovnfs apply agent-bridge-<nom> --branch agent/<nom>` (`get_agent` donne la commande exacte).
 
 **Puis-je utiliser GPT, Codex, des modèles locaux ou d'autres modèles que ceux d'Anthropic ?** Oui : tous les modèles qu'omp propose sur ta machine.
 
@@ -163,6 +163,7 @@ Ce contre quoi il ne protège pas :
 
 ## Limites
 
+- **ovnfs isole des fichiers, pas des processus.** Comme un worktree git, ce n'est pas un bac à sable. Les fichiers que git ignore, comme `.env`, sont visibles par l'agent ; ce qu'il y écrit reste dans sa copie.
 - **Claude Code est moins testé qu'omp comme moteur.** Le lancement, la lecture de l'état et l'envoi de touches ont été vérifiés en conditions réelles ; un tour complet de Claude Code ne l'a pas été.
 - **Un onglet Claude Code ouvert n'indique pas quelle session il fait tourner.** L'outil prend l'identifiant de session sur la ligne de commande s'il y en a un, sinon le transcript le plus récent du dossier, et refuse si plusieurs ont été actifs récemment.
 - **L'état est lu dans le transcript.** Un agent qui attend sur une boîte de dialogue reste `working` ; l'avertissement après 90 s sans activité est le signal pour regarder son écran.

@@ -1,8 +1,8 @@
 """agent-bridge MCP server: the tools a Claude conversation uses to run coding agents.
 
 An agent is an interactive omp or Claude Code session in a Tern tab. Agents the bridge starts get
-their own git worktree and branch; sessions that already exist can be adopted and are driven in
-place. The orchestrator reads an agent's state and report from its session transcript, its work
+their own isolated copy of the repository and branch (see checkouts.py); sessions that already
+exist can be adopted and are driven in place. The orchestrator reads an agent's state and report from its session transcript, its work
 from git, and talks to it by typing into its tab.
 
 Tool arguments come from a language model whose context includes text written by the agents, so
@@ -24,7 +24,7 @@ from typing import Literal
 from mcp.server.fastmcp import FastMCP
 
 from . import catalog as cat
-from . import proc, store, tern, transcripts
+from . import checkouts, proc, store, tern, transcripts
 from .models import OMP, Models
 
 TERN_SESSION = os.environ.get("AGENT_BRIDGE_TERN_SESSION", "agents")
@@ -44,7 +44,6 @@ POLL_SECONDS = 3
 MAX_WAIT_SECONDS = 600
 RESTART_GRACE_SECONDS = 1.5  # lets a closed session release its transcript lock before it is resumed
 AMBIGUOUS_WINDOW_SECONDS = 600
-CHECKOUT_TIMEOUT_SECONDS = 600  # `git worktree add` on a large repository
 MAX_UNTRACKED_DIFFS = 200
 BUSY = ("starting", "working")
 
@@ -52,7 +51,7 @@ AGENT_RULES = """\
 You are an implementation agent. A remote orchestrator (another Claude conversation) assigned
 you this task through agent-bridge; it reads your final message and your git diff, and may send
 follow-up messages in this session.
-- Work only inside the current directory: it is a dedicated git worktree on its own branch.
+- Work only inside the current directory: it is your own copy of the repository, on its own branch.
 - Do not ask clarifying questions unless you are truly blocked; make the conservative choice and say so.
 - When the task is done, commit your work on the current branch with a clear message.
 - End your final message with a section titled "## Report": what changed (files), how you verified it
@@ -64,7 +63,7 @@ models = Models()
 mcp = FastMCP(
     "agent-bridge",
     instructions=(
-        "Orchestrate coding agents (omp or Claude Code) running in Tern tabs, one git worktree each.\n"
+        "Orchestrate coding agents (omp or Claude Code) running in Tern tabs, each in its own copy of the repository.\n"
         "Loop: start_agent per independent task -> wait_for_agents -> get_agent (report) / get_diff -> "
         "send_message to correct or continue -> stop_agent(cleanup=True) once merged.\n"
         "Existing work: discover_sessions lists omp / Claude Code sessions already running in Tern and "
@@ -88,18 +87,9 @@ mcp = FastMCP(
 # ---------------------------------------------------------------- git
 
 
-def _git(cwd: Path | str, *args: str, check: bool = True, timeout: float = 60) -> str:
-    # fsmonitor is a configurable command: never let a worktree an agent can write to run one here.
-    return proc.run(["git", "-C", str(cwd), "-c", "core.fsmonitor=false", *args], check=check, timeout=timeout)
-
-
 def _git_root(path: Path | str) -> Path | None:
-    out = _git(path, "rev-parse", "--show-toplevel", check=False).strip()
+    out = proc.git(path, "rev-parse", "--show-toplevel", check=False).strip()
     return Path(out) if out else None
-
-
-def _commit(cwd: Path | str, rev: str) -> str:
-    return _git(cwd, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip()
 
 
 # ---------------------------------------------------------------- agent state
@@ -266,7 +256,7 @@ def start_agent(
     model: str | None = None,
     thinking: str | None = None,
     auto_approve: bool = False,
-    worktree: bool = True,
+    isolate: bool = True,
 ) -> dict:
     """Start an implementation agent on `task` in a new Tern tab (Tern session "agents").
 
@@ -274,7 +264,7 @@ def start_agent(
     task: the full, self-contained instructions; the agent sees nothing else from this conversation.
     name: short id (lowercase letters, digits, dashes); defaults to the task's first words.
       The branch is agent/<name>.
-    base: commit-ish the worktree branches from (default HEAD of the repo).
+    base: commit-ish the agent's branch starts from (default HEAD of the repo).
     engine: "omp" (default; every provider configured on this machine) or "claude" (Claude Code).
     model: "auto:fast" | "auto:balanced" | "auto:frontier" (tier from the live catalog), or an exact
       model: omp selector from list_models (e.g. "openai-codex/gpt-6.1-sol"), or for claude an alias
@@ -285,7 +275,9 @@ def start_agent(
     auto_approve: let the agent run every tool without asking (omp --auto-approve /
       claude --dangerously-skip-permissions). Refused unless the user enabled it on this machine.
       Without it the agent may stop on approvals; read them with capture_screen, answer with press_keys.
-    worktree: False runs in the repository checkout itself (no isolation; avoid with parallel agents).
+    isolate: the agent works in its own copy of the repository (an ovnfs checkout when ovnfs is installed,
+      which keeps ignored files such as node_modules and .env, else a git worktree). False runs it in the
+      repository checkout itself (no isolation; avoid with parallel agents).
     """
     if not task.strip():
         raise ValueError("task is empty")
@@ -296,15 +288,13 @@ def start_agent(
     if not repo_root:
         raise ValueError(f"{repo} is not inside a git repository")
     name = store.unique_name(store.slug(name or task))
-    base_sha = _commit(repo_root, base)
+    base_sha = proc.commit(repo_root, base)
     store.ensure_dirs()
-    if worktree:
-        cwd = store.WORKTREES / f"{repo_root.name}-{name}"
-        branch = f"agent/{name}"
-        _git(repo_root, "worktree", "add", "-b", branch, str(cwd), base_sha, timeout=CHECKOUT_TIMEOUT_SECONDS)
+    if isolate:
+        isolation, cwd, branch = checkouts.create(repo_root, name, base_sha)
     else:
-        cwd = repo_root
-        branch = _git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").strip()
+        isolation, cwd = None, repo_root
+        branch = proc.git(repo_root, "rev-parse", "--abbrev-ref", "HEAD").strip()
     t = {
         "name": name,
         "engine": engine,
@@ -312,7 +302,7 @@ def start_agent(
         "cwd": str(cwd),
         "branch": branch,
         "base_sha": base_sha,
-        "isolated": worktree,
+        "isolation": isolation,
         "adopted": False,
         "model": model,
         "thinking": thinking,
@@ -329,12 +319,11 @@ def start_agent(
             Path(t["session_dir"]).mkdir(parents=True, exist_ok=True)
         _launch(t, task, resume=False)
     except Exception:
-        # Nothing has run in the worktree yet, so removing it cannot lose work.
+        # Nothing has run in the copy yet, so removing it cannot lose work.
         if t["block"] is not None:
             tern.close(t["block"], None)
-        if worktree:
-            _git(repo_root, "worktree", "remove", "--force", str(cwd), check=False)
-            _git(repo_root, "branch", "-D", branch, check=False)
+        if isolation:
+            checkouts.remove(isolation, repo_root, cwd, name, branch, force=True)
         if t["session_dir"]:
             shutil.rmtree(t["session_dir"], ignore_errors=True)
         store.forget(name)
@@ -343,6 +332,7 @@ def start_agent(
         "name": name,
         "branch": branch,
         "cwd": str(cwd),
+        "isolation": isolation or "none",
         "base_sha": base_sha,
         "model": model or "default",
         "thinking": thinking or "default",
@@ -439,7 +429,7 @@ def discover_sessions(include_saved: bool = True, limit: int = 15) -> dict:
                 break
             meta = transcripts.session_meta(path)
             if not meta or not Path(meta["cwd"]).is_dir():
-                continue  # not a transcript, or its directory is gone (a removed worktree): cannot be reopened
+                continue  # not a transcript, or its directory is gone (a removed checkout): cannot be reopened
             kept += 1
             saved.append(
                 {
@@ -467,7 +457,7 @@ def adopt_session(
     name: agent name (default: from the session title).
     base: commit-ish get_diff compares against (default: the current HEAD, so the diff shows changes
       made from now on plus any uncommitted edits already present).
-    The session keeps its own directory, branch and model: no worktree is created, the model policy is
+    The session keeps its own directory, branch and model: no copy is created, the model policy is
     not applied until you switch its model, and stop_agent never deletes anything of an adopted session.
     """
     if (block is None) == (session_file is None):
@@ -505,9 +495,9 @@ def adopt_session(
         "engine": meta["engine"],
         "repo": str(root) if root else None,
         "cwd": cwd,
-        "branch": (_git(cwd, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() or None) if root else None,
-        "base_sha": _commit(cwd, base or "HEAD") if root else None,
-        "isolated": False,
+        "branch": (proc.git(cwd, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() or None) if root else None,
+        "base_sha": proc.commit(cwd, base or "HEAD") if root else None,
+        "isolation": None,
         "adopted": True,
         "model": None,
         "thinking": None,
@@ -566,10 +556,12 @@ def get_agent(name: str, history: int = 0) -> dict:
         status["history"] = texts[-min(history, 50) :]
     if t.get("base_sha"):
         cwd = t["cwd"]
-        status["branch"] = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() or t.get("branch")
-        status["commits"] = _git(cwd, "log", "--oneline", f"{t['base_sha']}..HEAD", check=False).strip().splitlines()
-        status["uncommitted"] = _git(cwd, "status", "--short", check=False).strip().splitlines()
-        status["diffstat_vs_base"] = _git(cwd, "diff", "--shortstat", t["base_sha"], check=False).strip()
+        status["branch"] = proc.git(cwd, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() or t.get("branch")
+        status["commits"] = proc.git(cwd, "log", "--oneline", f"{t['base_sha']}..HEAD", check=False).strip().splitlines()
+        status["uncommitted"] = proc.git(cwd, "status", "--short", check=False).strip().splitlines()
+        status["diffstat_vs_base"] = proc.git(cwd, "diff", "--shortstat", t["base_sha"], check=False).strip()
+    if t.get("isolation"):
+        status["merge"] = checkouts.bring_back_hint(t["isolation"], name, t["branch"])
     return status
 
 
@@ -588,8 +580,8 @@ def get_diff(name: str, path: str | None = None, stat_only: bool = False, max_ch
     spec = ["--", path] if path else []
     # No external diff drivers or textconv filters: the repository's config is not trusted to run commands here.
     plain = ("--no-ext-diff", "--no-textconv")
-    parts = [_git(cwd, "diff", *plain, "--stat" if stat_only else "--patch", t["base_sha"], *spec, check=False)]
-    untracked = [f for f in _git(cwd, "ls-files", "-z", "--others", "--exclude-standard", *spec).split("\0") if f]
+    parts = [proc.git(cwd, "diff", *plain, "--stat" if stat_only else "--patch", t["base_sha"], *spec, check=False)]
+    untracked = [f for f in proc.git(cwd, "ls-files", "-z", "--others", "--exclude-standard", *spec).split("\0") if f]
     if stat_only:
         if untracked:
             parts.append("untracked: " + ", ".join(untracked))
@@ -599,7 +591,7 @@ def get_diff(name: str, path: str | None = None, stat_only: bool = False, max_ch
             if size > max_chars or i == MAX_UNTRACKED_DIFFS:
                 parts.append(f"… {len(untracked) - i} more untracked file(s) not shown: " + ", ".join(untracked[i : i + 50]))
                 break
-            patch = _git(cwd, "diff", *plain, "--no-index", "--", "/dev/null", file, check=False)
+            patch = proc.git(cwd, "diff", *plain, "--no-index", "--", "/dev/null", file, check=False)
             parts.append(patch or f"(new file {file}: could not be diffed, e.g. a nested repository)")
             size += len(parts[-1])
     out = "\n".join(p for p in parts if p.strip()) or "(no changes)"
@@ -727,25 +719,12 @@ def _inside(path: str | None, root: Path) -> bool:
     return bool(path) and Path(path).resolve().is_relative_to(root.resolve())
 
 
-def _unsaved_work(t: dict) -> str | None:
-    """Why removing the agent's worktree would lose work, or None when it would not.
-
-    Whatever cannot be checked counts as unsaved.
-    """
-    try:
-        dirty = _git(t["cwd"], "status", "--porcelain").strip().splitlines()
-        head = _commit(t["cwd"], "HEAD")
-        # Commits on the worktree's HEAD or on its branch that the repository's HEAD does not have.
-        # Both are counted: the agent may have detached HEAD or switched to another branch.
-        ahead = _git(t["repo"], "rev-list", "--count", head, f"refs/heads/{t['branch']}", "--not", "HEAD").strip()
-    except RuntimeError:
-        return f"its worktree could not be checked (inspect {t['cwd']})"
-    reasons = []
-    if dirty:
-        reasons.append(f"{len(dirty)} uncommitted or untracked file(s) ({', '.join(line.strip() for line in dirty[:5])})")
-    if ahead != "0":
-        reasons.append(f"{ahead} commit(s) not merged into the repository's HEAD")
-    return " and ".join(reasons) or None
+def _owned_copy(t: dict) -> bool:
+    """The agent works in a copy the bridge created, so cleanup may delete it."""
+    if t.get("adopted") or not t.get("isolation") or not Path(t["cwd"]).exists():
+        return False
+    # A git worktree is removed by path: only ever one under the bridge's own directory.
+    return t["isolation"] == "ovnfs" or _inside(t["cwd"], store.WORKTREES)
 
 
 @mcp.tool()
@@ -753,20 +732,21 @@ def stop_agent(name: str, cleanup: bool = False, force: bool = False) -> dict:
     """Stop an agent.
 
     An agent started by start_agent has its tab closed; it can be resumed later with send_message.
-    cleanup also removes its worktree and branch and forgets it. That is refused when the worktree
-    has uncommitted files or commits not merged into the repository's current HEAD, unless
-    force=True, which discards that work.
+    cleanup also removes its copy of the repository and its branch, and forgets it. That is refused
+    when the copy has uncommitted files or commits not merged into the repository's current HEAD,
+    unless force=True, which discards that work.
     An adopted session is only forgotten: its tab, directory, branch and transcript are left alone.
     """
     t = store.load(name)
     if t.get("adopted"):
         store.forget(name)
         return {"name": name, "forgotten": True, "tab": "left open"}
-    owns_worktree = t["isolated"] and _inside(t["cwd"], store.WORKTREES) and Path(t["cwd"]).exists()
-    if cleanup and owns_worktree and not force:
-        reason = _unsaved_work(t)
+    owned = _owned_copy(t)
+    if cleanup and owned and not force:
+        reason = checkouts.unsaved_work(t["repo"], t["cwd"], t["branch"])
         if reason:
-            raise RuntimeError(f"refusing cleanup of {name}: {reason}. Merge first, or pass force=True to discard that work.")
+            hint = checkouts.bring_back_hint(t["isolation"], name, t["branch"])
+            raise RuntimeError(f"refusing cleanup of {name}: {reason}. First {hint}, or pass force=True to discard that work.")
     result: dict = {"name": name}
     blocks = tern.scan()
     if t.get("block") in blocks:
@@ -775,12 +755,10 @@ def stop_agent(name: str, cleanup: bool = False, force: bool = False) -> dict:
         result["tab"] = "closed"
     if not cleanup:
         return result
-    if owns_worktree:
+    if owned:
         time.sleep(RESTART_GRACE_SECONDS)  # the agent's process is gone before its files are removed
-        # Without force, git itself refuses a worktree with changes or a branch that is not merged.
-        _git(t["repo"], "worktree", "remove", *(["--force"] if force else []), t["cwd"])
-        _git(t["repo"], "branch", "-D" if force else "-d", t["branch"], check=not force)
-        result["worktree"] = "removed"
+        checkouts.remove(t["isolation"], t["repo"], t["cwd"], name, t["branch"], force)
+        result["checkout"] = "removed"
         result["branch"] = "deleted"
     if _inside(t.get("session_dir"), store.SESSIONS):
         shutil.rmtree(t["session_dir"], ignore_errors=True)

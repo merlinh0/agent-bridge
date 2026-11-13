@@ -1,6 +1,6 @@
 # agent-bridge — orchestrate parallel AI coding agents from Claude (MCP server)
 
-**agent-bridge** is an MCP server that turns a Claude conversation (Claude Desktop or Claude Code) into an **orchestrator for parallel AI coding agents**. Each agent runs in its own [Tern](https://docs.stencil.so/tern) terminal tab, on its own **git worktree** and branch. Agents can use **any model available on your machine** through [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi), or run as Claude Code.
+**agent-bridge** is an MCP server that turns a Claude conversation (Claude Desktop or Claude Code) into an **orchestrator for parallel AI coding agents**. Each agent runs in its own [Tern](https://docs.stencil.so/tern) terminal tab, in its own **isolated copy of the repository** ([ovnfs](https://github.com/stencil-hq/ovnfs) checkout or git worktree) and branch. Agents can use **any model available on your machine** through [omp (oh-my-pi)](https://github.com/can1357/oh-my-pi), or run as Claude Code.
 
 The orchestrator plans the work, starts the agents, follows their progress, reads their reports and diffs, and sends corrections. You don't copy-paste anything between the two.
 
@@ -15,7 +15,7 @@ The orchestrator plans the work, starts the agents, follows their progress, read
 flowchart LR
   O["Claude Desktop / Claude Code<br/>(orchestrator)"] -- MCP tools --> B["agent-bridge"]
   B -- "tern new tab · send · capture" --> T["Tern session 'agents'<br/>one tab per agent"]
-  B -- "git worktree add" --> W["worktree + branch agent/&lt;name&gt;"]
+  B -- "ovnfs new / git worktree add" --> W["own copy + branch agent/&lt;name&gt;"]
   T --> A["omp (any provider) or Claude Code<br/>model + thinking per agent"]
   A -- "session transcript" --> B
   W -- "git diff" --> B
@@ -23,7 +23,7 @@ flowchart LR
 
 ## Features
 
-- **Parallel coding agents, isolated.** Each agent gets its own git worktree and branch (`agent/<name>`), so agents never step on each other or on your checkout.
+- **Parallel coding agents, isolated.** Each agent gets its own copy of the repository and branch (`agent/<name>`), so agents never step on each other or on your checkout. With [ovnfs](https://github.com/stencil-hq/ovnfs) installed the copy is a copy-on-write checkout that opens in about a second and keeps the files git ignores (`node_modules`, `.env`, build caches), so agents can run the project without reinstalling anything; otherwise it is a git worktree.
 - **Any model, any provider.** The default omp engine can use every model omp exposes on your machine: Anthropic, OpenAI / Codex, LiteLLM or other proxies, local models, and any other provider you configured. Claude Code is available as a second engine.
 - **Model choice that stays current.** Set an exact model, or use `auto:fast`, `auto:balanced` or `auto:frontier`. The tiers are recomputed from the live model catalog, so a newly released model appears in them as soon as omp lists it. No vendor is favoured by default.
 - **You decide which models are used.** Give the orchestrator rules such as "only use `openai-codex/*`" or "frontier = opus". It records them with `set_model_policy`, and the server enforces them on every start.
@@ -90,7 +90,7 @@ Other things you can ask:
 
 | Tool | What it does |
 |---|---|
-| `start_agent(repo, task, name?, base?, engine?, model?, thinking?, auto_approve?, worktree?)` | Creates the worktree and branch `agent/<name>`, then starts the agent in a Tern tab |
+| `start_agent(repo, task, name?, base?, engine?, model?, thinking?, auto_approve?, isolate?)` | Creates the agent's copy of the repository and branch `agent/<name>`, then starts the agent in a Tern tab |
 | `discover_sessions(include_saved?, limit?)` | Lists omp / Claude Code sessions running in Tern (any window) and recent saved sessions |
 | `adopt_session(block? \| session_file?, name?, base?)` | Takes over a live session in place, or reopens a saved one in a new tab |
 | `list_agents()` / `get_agent(name, history?)` | Shows state, model, thinking level, last message (the report), commits and uncommitted changes |
@@ -98,7 +98,7 @@ Other things you can ask:
 | `send_message(name, message, model?, thinking?)` | Sends a follow-up or a correction. Passing `model` or `thinking` restarts the agent on that model, with its full history |
 | `wait_for_agents(names?, timeout_s?)` | Blocks until an agent finishes its turn |
 | `capture_screen(name)` / `press_keys(name, keys)` | Shows an agent's screen and answers approval prompts or dialogs |
-| `stop_agent(name, cleanup?, force?)` | Closes the tab, and with `cleanup` removes the worktree and branch. Refuses if work is unmerged. An adopted session is only forgotten: nothing of it is closed or deleted |
+| `stop_agent(name, cleanup?, force?)` | Closes the tab, and with `cleanup` removes the agent's copy and branch. Refuses if work is unmerged. An adopted session is only forgotten: nothing of it is closed or deleted |
 | `list_models(engine?, filter?, refresh?)` | Lists every available model with its thinking levels and price, the current tiers, and whether each model is allowed |
 | `get_model_policy()` / `set_model_policy(allowed_models?, tiers?)` | Reads or sets the model rules |
 
@@ -149,14 +149,15 @@ This installs a small omp hook (`~/.omp/agent/hooks/post/agent-bridge-notify.ts`
 | Environment variable | Default |
 |---|---|
 | `AGENT_BRIDGE_HOME` | `~/.agent-bridge` (tasks, worktrees, sessions, `config.json`) |
+| `AGENT_BRIDGE_ISOLATION` | ovnfs when installed, else git worktrees; `worktree` forces git worktrees |
 | `AGENT_BRIDGE_TERN_SESSION` | `agents` |
-| `AGENT_BRIDGE_TERN` / `AGENT_BRIDGE_OMP` / `AGENT_BRIDGE_CLAUDE` | auto-detected |
+| `AGENT_BRIDGE_TERN` / `AGENT_BRIDGE_OMP` / `AGENT_BRIDGE_CLAUDE` / `AGENT_BRIDGE_OVNFS` | auto-detected |
 | `AGENT_BRIDGE_OMP_SESSIONS` | `~/.omp/agent/sessions` |
 
 ## FAQ
 
 **How do I run several Claude Code or AI coding agents in parallel without conflicts?**
-Each agent works in its own git worktree on its own branch, so file edits and commits never collide. Merge the branches you accept (`git merge agent/<name>` or a PR), then call `stop_agent(cleanup=True)`.
+Each agent works in its own copy of the repository on its own branch, so file edits and commits never collide. Merge the branches you accept (`git merge agent/<name>` or a PR), then call `stop_agent(cleanup=True)`. With ovnfs, an agent's commits stay in its checkout until you bring them in: `ovnfs apply agent-bridge-<name> --branch agent/<name>` (`get_agent` prints the exact command).
 
 **Can agents use GPT, Codex, local or other non-Anthropic models?**
 Yes. The omp engine uses every model omp exposes on your machine. `list_models` shows them all, and the auto tiers mix vendors by price.
@@ -180,7 +181,7 @@ The orchestrator reads text written by the agents (reports, diffs, terminal scre
 - **Tool arguments are treated as untrusted.** Agent names are validated, session files must be real transcripts from the omp / Claude Code session stores, and nothing is passed through a shell or parsed as a command-line option.
 - **`auto_approve` is off until you enable it** with `agent-bridge auto-approve on` in a terminal. No MCP tool can flip that switch.
 - **Nothing is typed into a pane that no longer runs the agent.** If an adopted session exits and leaves your shell behind, the next message resumes the session in a new tab instead.
-- **Cleanup never guesses.** `stop_agent(cleanup=True)` refuses when the worktree has uncommitted files or unmerged commits, or when it cannot check. Adopted sessions are never deleted.
+- **Cleanup never guesses.** `stop_agent(cleanup=True)` refuses when the agent's copy has uncommitted files or unmerged commits, or when it cannot check. Adopted sessions are never deleted.
 - **State is private.** `~/.agent-bridge` is created with owner-only permissions.
 
 What it does not protect against:
@@ -193,6 +194,7 @@ Please report vulnerabilities privately through GitHub's "Report a vulnerability
 
 ## Limitations
 
+- **ovnfs isolates files, not processes.** Like a git worktree, it is not a sandbox. Files git ignores, such as `.env`, are visible to the agent; what it writes there stays in its checkout.
 - **Claude Code as an engine is less tested than omp.** Starting, reading state and sending keys were checked live; a full Claude Code turn was not.
 - **A live Claude Code pane does not say which session it runs.** The bridge takes the session id from the command line when there is one, otherwise the most recent transcript of that directory, and refuses when several were active recently.
 - **State is read from the transcript.** An agent waiting on a dialog stays `working`; the warning after 90 s without activity is the signal to look at its screen.

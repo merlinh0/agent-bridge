@@ -4,7 +4,9 @@
 
 - MCP server that lets a Claude conversation (Claude Desktop, Claude Code, any MCP client) orchestrate
   coding agents running in Tern tabs: omp (any provider configured on the machine) or Claude Code.
-- One git worktree and branch per agent; state, report and diff read from session transcripts and git.
+- One isolated copy of the repository and branch per agent: an ovnfs checkout when ovnfs is installed (keeps
+  ignored files such as node_modules and .env), a git worktree otherwise; state, report and diff read from
+  session transcripts and git.
 - Adopt existing sessions: live omp / Claude Code panes in any Tern window, or saved sessions reopened in a tab.
 - Model choice per agent: exact model or `auto:fast|balanced|frontier`, tiers recomputed from the live
   omp catalog so new releases are picked up automatically; no vendor favoured by default.

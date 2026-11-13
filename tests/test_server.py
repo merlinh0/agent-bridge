@@ -355,9 +355,11 @@ def unsaved(kind: str, work: Path) -> None:
             git(work, "checkout", "-q", "-b", "elsewhere")
         (work / "app.py").write_text("committed\n")
         git(work, "commit", "-qam", "work")
+        if kind == "left-branch":  # the work stays on the agent's branch, HEAD moved back off it
+            git(work, "checkout", "-q", "--detach", "HEAD~1")
 
 
-@pytest.mark.parametrize("kind", ["untracked", "edited", "committed", "detached", "other-branch"])
+@pytest.mark.parametrize("kind", ["untracked", "edited", "committed", "detached", "other-branch", "left-branch"])
 def test_cleanup_refuses_to_lose_work(state, repo, fake_tern, kind):
     agent = start(repo, name="fix")
     unsaved(kind, Path(agent["cwd"]))
@@ -382,7 +384,7 @@ def test_cleanup_removes_merged_work_and_force_discards_the_rest(state, repo, fa
     git(work, "commit", "-qam", "work")
     git(repo, "merge", "-q", "agent/merged")
     out = server.stop_agent("merged", cleanup=True)
-    assert out["worktree"] == "removed" and not work.exists()
+    assert out["checkout"] == "removed" and not work.exists()
     assert "agent/merged" not in git(repo, "branch", "--list")
 
     dropped = start(repo, name="dropped")

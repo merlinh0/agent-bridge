@@ -157,6 +157,15 @@ def cmd_doctor(args: argparse.Namespace) -> None:
         except (RuntimeError, ValueError) as e:
             required.append(_report(False, "omp models", str(e), "run `omp models` to see the error"))
     required.append(_report(shutil.which("git") is not None, "git", shutil.which("git") or "not found"))
+    from . import checkouts
+
+    if checkouts.BACKEND == "ovnfs":
+        _report(True, "agent isolation", f"ovnfs checkouts ({checkouts.OVNFS})")
+    else:
+        detail = "git worktrees" + (
+            "" if checkouts.OVNFS else "; install ovnfs to keep node_modules, .env and caches in agents' copies"
+        )
+        _report(True, "agent isolation", detail)
 
     _report(bool(server.CLAUDE), "Claude Code (optional, engine=claude)", server.CLAUDE or "not found")
     desktop = desktop_config_path()

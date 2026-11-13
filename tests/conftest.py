@@ -10,7 +10,7 @@ from pathlib import Path
 
 import pytest
 
-from agent_bridge import server, store, tern
+from agent_bridge import checkouts, server, store, tern
 from agent_bridge.models import Models
 
 CATALOG = [
@@ -64,6 +64,7 @@ def state(tmp_path, monkeypatch):
     monkeypatch.setattr(server, "models", Models())
     monkeypatch.setattr(Models, "catalog", lambda self, refresh=False: CATALOG)
     monkeypatch.setattr(server, "RESTART_GRACE_SECONDS", 0)
+    monkeypatch.setattr(checkouts, "BACKEND", "worktree")  # CI has no ovnfs; its own calls are checked live
     store.ensure_dirs()
     return root
 

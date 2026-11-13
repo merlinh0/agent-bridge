@@ -20,14 +20,18 @@ def find_executable(name: str, *candidates: str | Path | None) -> str | None:
     return shutil.which(name)
 
 
-def run(args: list[str], *, cwd: Path | str | None = None, check: bool = True, timeout: float = 60) -> str:
+def run(
+    args: list[str], *, cwd: Path | str | None = None, check: bool = True, timeout: float = 60, env: dict[str, str] | None = None
+) -> str:
     """Run a command without a shell and return its stdout.
 
     Raises RuntimeError (never a raw subprocess exception) so tool callers get one readable line.
     """
     label = " ".join(args[:3])
     try:
-        p = subprocess.run(args, check=False, cwd=cwd, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout)
+        p = subprocess.run(
+            args, check=False, cwd=cwd, env=env, capture_output=True, encoding="utf-8", errors="replace", timeout=timeout
+        )
     except subprocess.TimeoutExpired as e:
         raise RuntimeError(f"`{label} …` timed out after {timeout:.0f}s") from e
     except OSError as e:
@@ -35,3 +39,13 @@ def run(args: list[str], *, cwd: Path | str | None = None, check: bool = True, t
     if check and p.returncode != 0:
         raise RuntimeError(f"`{label} …` failed ({p.returncode}): {(p.stderr or p.stdout).strip()}")
     return p.stdout
+
+
+def git(cwd: Path | str, *args: str, check: bool = True, timeout: float = 60) -> str:
+    # fsmonitor is a configurable command: never let a checkout an agent can write to run one here.
+    return run(["git", "-C", str(cwd), "-c", "core.fsmonitor=false", *args], check=check, timeout=timeout)
+
+
+def commit(cwd: Path | str, rev: str) -> str:
+    """Full id of the commit `rev` names, or RuntimeError."""
+    return git(cwd, "rev-parse", "--verify", "--end-of-options", f"{rev}^{{commit}}").strip()
