@@ -169,7 +169,7 @@ def _observe(t: dict, blocks: dict[int, dict]) -> Observation:
     status = {
         "name": t["name"],
         "engine": t["engine"],
-        "model": t.get("model") or "default",
+        "model": transcripts.last_model(messages) or t.get("model") or "default",
         "thinking": t.get("thinking") or "default",
         "state": state,
         "seconds_since_activity": round(age) if age is not None else None,
@@ -523,7 +523,7 @@ def adopt_session(
         _launch(t, None, resume=True)
     else:
         store.save(t)
-    return {
+    adopted = {
         "name": t["name"],
         "engine": t["engine"],
         "cwd": cwd,
@@ -531,6 +531,14 @@ def adopt_session(
         "tern_block": t["block"],
         "mode": "driven in place" if block is not None else "reopened in a new tab",
     }
+    model = transcripts.last_model(transcripts.read_messages(t["engine"], path))
+    if model:
+        adopted["model"] = model
+        if not cat.is_allowed(cat.model_key(t["engine"], model), models.policy().allowed):
+            adopted["warning"] = (
+                f"this session runs on {model}, which the model policy does not allow; switch it with send_message(model=...)"
+            )
+    return adopted
 
 
 @mcp.tool()
@@ -558,6 +566,7 @@ def get_agent(name: str, history: int = 0) -> dict:
         status["history"] = texts[-min(history, 50) :]
     if t.get("base_sha"):
         cwd = t["cwd"]
+        status["branch"] = _git(cwd, "rev-parse", "--abbrev-ref", "HEAD", check=False).strip() or t.get("branch")
         status["commits"] = _git(cwd, "log", "--oneline", f"{t['base_sha']}..HEAD", check=False).strip().splitlines()
         status["uncommitted"] = _git(cwd, "status", "--short", check=False).strip().splitlines()
         status["diffstat_vs_base"] = _git(cwd, "diff", "--shortstat", t["base_sha"], check=False).strip()
@@ -661,11 +670,12 @@ def send_message(name: str, message: str, model: str | None = None, thinking: st
 
 
 @mcp.tool()
-async def wait_for_agents(names: list[str] | None = None, timeout_s: int = 50) -> dict:
+async def wait_for_agents(names: list[str] | None = None, timeout_s: int = 25) -> dict:
     """Block until one of the agents finishes its turn (idle / exited / closed), or timeout.
 
     names: agents to report on (default: all). Those that are starting or working when the call
     begins are waited for; `finished` lists the ones whose turn ended during the call.
+    timeout_s: keep it below your client's tool-call timeout (some cut calls at 30 s).
     Returns immediately if none is busy. Call again after a timeout.
     """
     deadline = time.monotonic() + max(1, min(timeout_s, MAX_WAIT_SECONDS))

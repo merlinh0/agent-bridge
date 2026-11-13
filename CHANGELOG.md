@@ -11,6 +11,8 @@
 - Model policy: an allowlist (glob patterns) and a pinned model per tier, set by the orchestrator for the
   session or by the user in `~/.agent-bridge/config.json`; enforced server-side.
 - `agent-bridge install | uninstall | doctor | models | auto-approve | notify` CLI and a one-line `install.sh`.
+- Agent status shows the model the session actually runs on and its current branch; adopting a session on a
+  model the policy does not allow returns a warning.
 - `agent-bridge notify on`: an omp hook that shows a desktop notification when a session finishes its turn.
 - Hardened for untrusted tool arguments: validated agent names, confined session files, no shell or option
   parsing of caller text, fail-closed cleanup, `auto_approve` off until the user enables it, nothing typed

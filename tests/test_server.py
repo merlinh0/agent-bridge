@@ -225,7 +225,19 @@ def adopted(state, repo, fake_tern, tmp_path, monkeypatch):
     (sessions / "proj").mkdir(parents=True)
     monkeypatch.setattr(server, "OMP_SESSIONS", sessions)
     transcript = sessions / "proj" / "s.jsonl"
-    transcript.write_text(json.dumps({"type": "session", "id": "s1", "cwd": str(repo)}) + "\n")
+    reply = {
+        "role": "assistant",
+        "stopReason": "stop",
+        "provider": "other",
+        "model": "big-1",
+        "content": [{"type": "text", "text": "hi"}],
+    }
+    transcript.write_text(
+        json.dumps({"type": "session", "id": "s1", "cwd": str(repo)})
+        + "\n"
+        + json.dumps({"type": "message", "message": reply})
+        + "\n"
+    )
     block = fake_tern.add("omp", cwd=str(repo), omp_session_file=str(transcript), title="my session")
     name = server.adopt_session(block=block)["name"]
     return store.load(name), transcript
@@ -236,6 +248,30 @@ def test_adopting_a_live_pane_drives_it_in_place(adopted, fake_tern):
     assert agent["adopted"] and agent["session_file"] == str(transcript) and fake_tern.spawned == []
     with pytest.raises(ValueError, match="already managed"):
         server.adopt_session(session_file=str(transcript))
+
+
+def test_an_adopted_session_reports_its_real_model_and_branch(adopted, repo):
+    agent, _ = adopted
+    git(repo, "checkout", "-q", "-b", "docs/readme")
+    status = server.get_agent(agent["name"])
+    assert status["model"] == "other/big-1" and status["branch"] == "docs/readme"
+
+
+def test_adopting_a_session_on_a_disallowed_model_warns(state, repo, fake_tern, tmp_path, monkeypatch):
+    sessions = tmp_path / "omp-sessions"
+    (sessions / "proj").mkdir(parents=True)
+    monkeypatch.setattr(server, "OMP_SESSIONS", sessions)
+    transcript = sessions / "proj" / "s.jsonl"
+    reply = {"role": "assistant", "stopReason": "stop", "provider": "other", "model": "big-1", "content": []}
+    transcript.write_text(
+        json.dumps({"type": "session", "id": "s1", "cwd": str(repo)})
+        + "\n"
+        + json.dumps({"type": "message", "message": reply})
+        + "\n"
+    )
+    block = fake_tern.add("omp", cwd=str(repo), omp_session_file=str(transcript))
+    server.set_model_policy(allowed_models=["acme/*"])
+    assert "does not allow" in server.adopt_session(block=block)["warning"]
 
 
 def test_nothing_is_typed_into_the_shell_an_adopted_agent_left_behind(adopted, fake_tern):

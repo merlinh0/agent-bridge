@@ -29,6 +29,7 @@ class Message:
     stop: str | None
     text: str
     tool_use: bool
+    model: str | None = None  # the model that wrote an assistant message, as the engine recorded it
 
 
 def _parse(engine: str, line: bytes) -> Message | None:
@@ -45,17 +46,21 @@ def _parse(engine: str, line: bytes) -> Message | None:
         if entry.get("type") != "message":
             return None
         stop = message.get("stopReason")
+        provider, model_id = message.get("provider"), message.get("model")
+        model = f"{provider}/{model_id}" if isinstance(provider, str) and isinstance(model_id, str) else None
     else:
         if entry.get("type") not in ("user", "assistant") or entry.get("isSidechain"):
             return None
         stop = message.get("stop_reason")
+        model = _text(message.get("model"))
     content = message.get("content") or []
     if isinstance(content, str):
         content = [{"type": "text", "text": content}]
     parts = [c for c in content if isinstance(c, dict)]
     text = "\n".join(c.get("text") or "" for c in parts if c.get("type") == "text")
     tool_use = any(c.get("type") in ("toolCall", "tool_use") for c in parts)
-    return Message(role=message.get("role"), stop=stop, text=text.strip(), tool_use=tool_use)
+    role = message.get("role")
+    return Message(role=role, stop=stop, text=text.strip(), tool_use=tool_use, model=model if role == "assistant" else None)
 
 
 def read_messages(engine: str, path: Path) -> list[Message]:
@@ -91,6 +96,11 @@ def turn_state(engine: str, messages: list[Message], seconds_since_write: float)
 def last_turn_failed(messages: list[Message]) -> bool:
     """The last turn ended on an error or was aborted, so the last assistant text predates it."""
     return bool(messages) and messages[-1].role == "assistant" and messages[-1].stop in ("error", "aborted")
+
+
+def last_model(messages: list[Message]) -> str | None:
+    """The model the session actually ran on most recently."""
+    return next((m.model for m in reversed(messages) if m.model), None)
 
 
 def last_assistant_text(messages: list[Message]) -> str:

@@ -35,6 +35,28 @@ def test_omp_transcript_is_parsed_and_other_entries_are_ignored(tmp_path):
     assert tr.read_messages("omp", path) == [Message("user", None, "do it", False), Message("assistant", "toolUse", "", True)]
 
 
+def test_the_model_of_each_reply_is_recorded(tmp_path):
+    path = tmp_path / "s.jsonl"
+    reply = {
+        "type": "message",
+        "message": {"role": "assistant", "stopReason": "stop", "provider": "openai-codex", "model": "gpt-6-luna", "content": []},
+    }
+    write(path, omp("user", text="hi"), json.dumps(reply))
+    assert tr.last_model(tr.read_messages("omp", path)) == "openai-codex/gpt-6-luna"
+
+    path = tmp_path / "c.jsonl"
+    write(
+        path,
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"role": "assistant", "model": "claude-opus-5-5", "stop_reason": "end_turn", "content": []},
+            }
+        ),
+    )
+    assert tr.last_model(tr.read_messages("claude", path)) == "claude-opus-5-5"
+
+
 def test_claude_sidechain_entries_are_not_the_agents_own_turn(tmp_path):
     path = tmp_path / "c.jsonl"
     write(
