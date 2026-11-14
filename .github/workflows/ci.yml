@@ -40,3 +40,19 @@ jobs:
         with:
           python-version: "3.10"
       - run: uv run --resolution lowest-direct --group dev pytest -q
+
+  tern-plugin:
+    # Type-checks the Luau plugin against Tern's published plugin API.
+    runs-on: ubuntu-latest
+    env:
+      TERN_SDK: 0038ab9690df79078d013f81803a344077bfd4c5
+      LUAU_LSP: 1.70.1
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - run: |
+          curl -fsSL -o tern-plugin/tern.d.luau "https://raw.githubusercontent.com/stencil-hq/tern-sdk/$TERN_SDK/plugins/tern.d.luau"
+          curl -fsSL -o luau-lsp.zip "https://github.com/JohnnyMorganz/luau-lsp/releases/download/$LUAU_LSP/luau-lsp-linux-x86_64.zip"
+          unzip -q luau-lsp.zip
+          ./luau-lsp analyze --definitions=tern-plugin/tern.d.luau --platform=standard tern-plugin/host.luau tern-plugin/window.luau tern-plugin/common.luau

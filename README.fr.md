@@ -123,6 +123,16 @@ Le raisonnement par défaut est `low`, `medium` et `high` respectivement. `list_
 - Avec une liste d'autorisations, un agent lancé sans modèle reçoit `auto:balanced` parmi les modèles autorisés, au lieu du modèle par défaut du moteur.
 - Un modèle non autorisé est refusé au lancement, à la reprise et au changement de modèle.
 
+## Plugin Tern
+
+```sh
+tern plugin install github.com/merlinh0/agent-bridge/tern-plugin
+```
+
+Ensuite, **Show agents** dans la palette (`cmd+alt+shift+a`) ouvre le panneau Agents : chaque agent avec son état, son modèle, son niveau de raisonnement et sa dernière activité, et pour celui sélectionné sa branche, ses commits, comment le fusionner et son dernier message. `Entrée` va sur l'onglet de l'agent, `d` affiche son diff. Le widget **Agents**, à placer dans la barre de widgets (palette › Edit widgets…), affiche un compteur du type `3 agents · 1 working · 1 needs you`. Détails dans [tern-plugin/](tern-plugin/).
+
+La ligne de commande derrière le panneau s'utilise aussi seule : `agent-bridge status` (ou `--json`) et `agent-bridge diff <agent>`.
+
 ## Notifications
 
 L'orchestrateur apprend qu'un agent a fini grâce à `wait_for_agents`, mais seulement pendant qu'il attend. Pour être prévenu toi-même, même quand aucune conversation ne suit les agents, active les notifications :

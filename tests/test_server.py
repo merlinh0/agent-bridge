@@ -421,3 +421,15 @@ def test_text_is_sent_after_the_option_separator(monkeypatch):
     monkeypatch.setattr(time, "sleep", lambda s: None)
     tern.submit(7, None, "--help me")
     assert calls[0] == ("send", "7", "paste", "--", "--help me")
+
+
+def test_status_json_gives_the_tern_plugin_what_it_reads(state, repo, fake_tern, capsys):
+    from agent_bridge import cli
+
+    agent = start(repo, name="fix")
+    finish(agent)
+    cli.main(["status", "--json"])
+    [report] = json.loads(capsys.readouterr().out)
+    assert report["name"] == "fix" and report["state"] == "idle" and report["tern_block"] == agent["block"]
+    assert report["last_message"] == "## Report\ndone" and report["branch"] == "agent/fix"
+    assert {"model", "thinking", "engine", "cwd", "seconds_since_activity", "commits", "merge"} <= report.keys()

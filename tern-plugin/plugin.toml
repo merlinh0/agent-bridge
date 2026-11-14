@@ -1,0 +1,14 @@
+schema = 1
+id = "agent-bridge"
+name = "agent-bridge"
+version = "0.1.0"
+description = "Your agent-bridge agents in Tern: state, model, branch and report in a panel, a widget counting them, and a toast when one finishes or needs you."
+icon = "sparkle"
+host = "host.luau"
+window = "window.luau"
+
+[[blocks]]
+id = "agents"
+title = "Agents"
+# The window half's "Show agents" command opens it.
+palette = false

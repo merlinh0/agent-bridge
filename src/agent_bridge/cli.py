@@ -1,4 +1,4 @@
-"""Command line: `agent-bridge serve | install | uninstall | doctor | models | auto-approve | notify`."""
+"""Command line: `agent-bridge serve | install | uninstall | doctor | models | status | diff | auto-approve | notify`."""
 
 from __future__ import annotations
 
@@ -159,6 +159,14 @@ def cmd_doctor(args: argparse.Namespace) -> None:
     required.append(_report(shutil.which("git") is not None, "git", shutil.which("git") or "not found"))
     from . import checkouts
 
+    if tern.EXE:
+        listed = subprocess.run([tern.EXE, "plugin", "list"], check=False, capture_output=True, text=True).stdout
+        _report(
+            "agent-bridge" in listed,
+            "Tern plugin (optional: Agents panel)",
+            "",
+            "tern plugin install github.com/merlinh0/agent-bridge/tern-plugin",
+        )
     if checkouts.BACKEND == "ovnfs":
         _report(True, "agent isolation", f"ovnfs checkouts ({checkouts.OVNFS})")
     else:
@@ -184,6 +192,28 @@ def cmd_models(args: argparse.Namespace) -> None:
     from . import server
 
     print(json.dumps(server.list_models(filter=args.filter, refresh=args.refresh), indent=2))
+
+
+def cmd_status(args: argparse.Namespace) -> None:
+    """Every agent with its state, model, branch and report: what the Tern plugin shows."""
+    from . import agents, tern
+
+    blocks = tern.scan()
+    reports = [{**agents.report(t, blocks), "tern_block": t.get("block")} for t in store.all_tasks()]
+    if args.json:
+        print(json.dumps(reports))
+        return
+    if not reports:
+        print("No agents.")
+    for r in reports:
+        line = f"{r['name']:<24} {r['state']:<12} {r['model']} · {r['thinking']}"
+        print(line + (f"  [{r['branch']}]" if r.get("branch") else "") + (f"\n    ! {r['warning']}" if r.get("warning") else ""))
+
+
+def cmd_diff(args: argparse.Namespace) -> None:
+    from . import agents
+
+    print(agents.diff(store.load(args.name), args.path, args.stat))
 
 
 def cmd_auto_approve(args: argparse.Namespace) -> None:
@@ -219,6 +249,12 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("models", help="print available models and the current auto tiers")
     p.add_argument("--filter", help="only models whose name contains this text")
     p.add_argument("--refresh", action="store_true", help="re-fetch provider catalogs first")
+    p = sub.add_parser("status", help="every agent with its state, model and branch")
+    p.add_argument("--json", action="store_true", help="the full reports, as JSON")
+    p = sub.add_parser("diff", help="what an agent changed since its base commit")
+    p.add_argument("name")
+    p.add_argument("path", nargs="?", help="only this file or directory")
+    p.add_argument("--stat", action="store_true", help="only the per-file summary")
     p = sub.add_parser("auto-approve", help="allow or refuse agents that run tools without asking (refused by default)")
     p.add_argument("state", choices=["on", "off"])
     p = sub.add_parser("notify", help="desktop notification when an omp session finishes its turn")
@@ -229,6 +265,8 @@ def main(argv: list[str] | None = None) -> None:
         "uninstall": cmd_uninstall,
         "doctor": cmd_doctor,
         "models": cmd_models,
+        "status": cmd_status,
+        "diff": cmd_diff,
         "auto-approve": cmd_auto_approve,
         "notify": cmd_notify,
     }
