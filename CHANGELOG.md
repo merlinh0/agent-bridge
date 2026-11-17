@@ -15,6 +15,8 @@
 - `agent-bridge install | uninstall | doctor | models | status | diff | auto-approve | notify` CLI and a one-line `install.sh`.
 - Agent status shows the model the session actually runs on and its current branch; adopting a session on a
   model the policy does not allow returns a warning.
+- Tools carry MCP annotations and titles: Claude runs the reading tools without asking, asks for the ones
+  that act until allowed, and keeps asking for the destructive ones (`stop_agent`, `press_keys`).
 - Tern plugin (`tern-plugin/`): an Agents panel (state, model, report, diff, jump to the agent's tab), a palette
   command and a widget counting agents; backed by the new `agent-bridge status [--json]` and `agent-bridge diff`.
 - `agent-bridge notify on`: an omp hook that shows a desktop notification when a session finishes its turn.

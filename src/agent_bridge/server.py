@@ -21,6 +21,7 @@ from pathlib import Path
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.types import ToolAnnotations
 
 from . import agents, checkouts, proc, store, tern, transcripts
 from . import catalog as cat
@@ -54,6 +55,13 @@ follow-up messages in this session.
 """
 
 models = Models()
+
+# How Claude asks before a call: read-only tools can run without asking; the rest need approval,
+# which the user can turn into "Always allow". Destructive ones (deleting work, answering an
+# agent's approval prompt) keep asking unless the user changes it.
+READ = ToolAnnotations(readOnlyHint=True, openWorldHint=False)
+ACT = ToolAnnotations(readOnlyHint=False, destructiveHint=False, openWorldHint=False)
+DESTRUCTIVE = ToolAnnotations(readOnlyHint=False, destructiveHint=True, openWorldHint=False)
 
 mcp = FastMCP(
     "agent-bridge",
@@ -142,7 +150,7 @@ def _require_auto_approve_allowed() -> None:
 # ---------------------------------------------------------------- tools: agents
 
 
-@mcp.tool()
+@mcp.tool(title="Start an agent", annotations=ACT)
 def start_agent(
     repo: str,
     task: str,
@@ -292,7 +300,7 @@ def _session_file(path: str) -> Path:
     return resolved
 
 
-@mcp.tool()
+@mcp.tool(title="Find existing sessions", annotations=READ)
 def discover_sessions(include_saved: bool = True, limit: int = 15) -> dict:
     """Existing omp / Claude Code sessions the orchestrator can take over with adopt_session.
 
@@ -341,7 +349,7 @@ def discover_sessions(include_saved: bool = True, limit: int = 15) -> dict:
     return found
 
 
-@mcp.tool()
+@mcp.tool(title="Take over a session", annotations=ACT)
 def adopt_session(
     block: int | None = None, session_file: str | None = None, name: str | None = None, base: str | None = None
 ) -> dict:
@@ -427,7 +435,7 @@ def adopt_session(
     return adopted
 
 
-@mcp.tool()
+@mcp.tool(title="List agents", annotations=READ)
 def list_agents() -> list[dict]:
     """List every agent under control with its state.
 
@@ -436,7 +444,7 @@ def list_agents() -> list[dict]:
     return agents.statuses(None)
 
 
-@mcp.tool()
+@mcp.tool(title="Read an agent's report", annotations=READ)
 def get_agent(name: str, history: int = 0) -> dict:
     """State of one agent, its latest assistant message (normally its report), and a git summary.
 
@@ -446,7 +454,7 @@ def get_agent(name: str, history: int = 0) -> dict:
     return agents.report(store.load(name), tern.scan(), history)
 
 
-@mcp.tool()
+@mcp.tool(title="Read an agent's diff", annotations=READ)
 def get_diff(name: str, path: str | None = None, stat_only: bool = False, max_chars: int = 80_000) -> str:
     """Everything the agent changed since its base commit: commits + uncommitted edits + new files.
 
@@ -467,7 +475,7 @@ def _switch_model(t: dict, model: str | None, thinking: str | None) -> bool:
     return (t["model"], t["thinking"]) != before
 
 
-@mcp.tool()
+@mcp.tool(title="Message an agent", annotations=ACT)
 def send_message(name: str, message: str, model: str | None = None, thinking: str | None = None) -> dict:
     """Send a message to an agent as if typed in its tab: a follow-up when idle, a steer while omp is working.
 
@@ -517,7 +525,7 @@ def send_message(name: str, message: str, model: str | None = None, thinking: st
     return {"name": name, "delivered": how, "tern_block": t["block"]}
 
 
-@mcp.tool()
+@mcp.tool(title="Wait for agents", annotations=READ)
 async def wait_for_agents(names: list[str] | None = None, timeout_s: int = 25) -> dict:
     """Block until one of the agents finishes its turn (idle / exited / closed), or timeout.
 
@@ -538,7 +546,7 @@ async def wait_for_agents(names: list[str] | None = None, timeout_s: int = 25) -
         states = agents.statuses(names)
 
 
-@mcp.tool()
+@mcp.tool(title="Read an agent's screen", annotations=READ)
 def capture_screen(name: str, lines: int = 60) -> str:
     """Text currently shown in the agent's Tern tab (last `lines` lines). Use it to read approval prompts or dialogs.
 
@@ -554,7 +562,7 @@ def capture_screen(name: str, lines: int = 60) -> str:
     return "\n".join(out.rstrip().splitlines()[-max(1, min(lines, 500)) :])
 
 
-@mcp.tool()
+@mcp.tool(title="Press keys in an agent's tab", annotations=DESTRUCTIVE)
 def press_keys(name: str, keys: list[str]) -> str:
     """Press keys in the agent's tab, e.g. ["Enter"], ["Escape"], ["Down", "Enter"], ["ctrl+c"].
 
@@ -583,7 +591,7 @@ def _owned_copy(t: dict) -> bool:
     return t["isolation"] == "ovnfs" or _inside(t["cwd"], store.WORKTREES)
 
 
-@mcp.tool()
+@mcp.tool(title="Stop an agent", annotations=DESTRUCTIVE)
 def stop_agent(name: str, cleanup: bool = False, force: bool = False) -> dict:
     """Stop an agent.
 
@@ -626,7 +634,7 @@ def stop_agent(name: str, cleanup: bool = False, force: bool = False) -> dict:
 # ---------------------------------------------------------------- tools: models
 
 
-@mcp.tool()
+@mcp.tool(title="List models", annotations=READ)
 def list_models(engine: Literal["omp", "claude"] = "omp", filter: str | None = None, refresh: bool = False) -> dict:
     """Models available on this machine and the current automatic tiers.
 
@@ -671,7 +679,7 @@ def list_models(engine: Literal["omp", "claude"] = "omp", filter: str | None = N
     }
 
 
-@mcp.tool()
+@mcp.tool(title="Read the model policy", annotations=READ)
 def get_model_policy() -> dict:
     """Current model rules.
 
@@ -681,7 +689,7 @@ def get_model_policy() -> dict:
     return {**models.rules(), "auto_approve_allowed": bool(store.read_config().get("allow_auto_approve"))}
 
 
-@mcp.tool()
+@mcp.tool(title="Set the model policy", annotations=ACT)
 def set_model_policy(allowed_models: list[str] | None = None, tiers: dict[str, str] | None = None) -> dict:
     """Set which models agents may use. Call it when the user states model rules in their instructions.
 

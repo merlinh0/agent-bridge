@@ -75,6 +75,16 @@ Autres demandes possibles :
 - « Rouvre la session d'hier sur la landing et demande-lui de finir les tests. »
 - « Relance l'agent `fix-cache` au niveau frontier avec un raisonnement élevé. »
 
+### Moins de demandes d'autorisation dans Claude
+
+Chaque outil indique à Claude ce qu'il fait, pour que Claude ne demande que là où c'est utile :
+
+- **Les outils de lecture s'exécutent sans demander** : `list_agents`, `get_agent`, `get_diff`, `wait_for_agents`, `capture_screen`, `discover_sessions`, `list_models`, `get_model_policy`.
+- **Les outils qui agissent demandent jusqu'à ce que tu les autorises** : `start_agent`, `send_message`, `adopt_session`, `set_model_policy`. Clique sur **Always allow** à la première demande, ou règle-les tous d'un coup dans **Customize › Connectors › agent-bridge › Tool permissions**.
+- **Les outils destructifs continuent de demander** : `stop_agent` (peut supprimer la copie et la branche d'un agent) et `press_keys` (peut approuver une commande qu'un agent veut lancer). Tu peux aussi les autoriser au même endroit, en connaissance de cause.
+
+Ce sont les demandes de Claude. Les demandes d'approbation propres à un agent, dans sa session, sont une autre chose : voir `auto_approve` dans [Sécurité](#sécurité).
+
 ## Outils
 
 | Outil | Rôle |
@@ -151,7 +161,7 @@ Cela installe un petit hook omp (`~/.omp/agent/hooks/post/agent-bridge-notify.ts
 
 **Ça marche avec claude.ai dans le navigateur ?** Non. Il faudrait exposer sur Internet un serveur qui pilote ton terminal. Utilise Claude Desktop ou Claude Code.
 
-**Et les approbations ?** Par défaut, les agents suivent ta configuration d'approbation habituelle. `capture_screen` montre la demande et `press_keys` y répond. `auto_approve=true` supprime ces arrêts. Il est refusé tant que tu n'as pas lancé toi-même `agent-bridge auto-approve on` ; voir [Sécurité](#sécurité).
+**Et les approbations ?** Les demandes de Claude avant chaque outil sont traitées dans [Moins de demandes d'autorisation dans Claude](#moins-de-demandes-dautorisation-dans-claude). Dans la session d'un agent, les agents suivent ta configuration d'approbation habituelle. `capture_screen` montre la demande et `press_keys` y répond. `auto_approve=true` supprime ces arrêts. Il est refusé tant que tu n'as pas lancé toi-même `agent-bridge auto-approve on` ; voir [Sécurité](#sécurité).
 
 **Claude Code demande « Do you trust this folder? »** Une seule fois par dépôt. `press_keys(["Down","Enter"])` répond oui.
 
